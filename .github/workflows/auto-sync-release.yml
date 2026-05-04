@@ -85,6 +85,19 @@ jobs:
           git add -A
           git commit -m "chore(auto): sync upstream and refresh WhatsApp support"
 
+      - name: Validate signing secrets
+        if: steps.diff.outputs.has_changes == 'true'
+        env:
+          KEY_STORE: ${{ secrets.KEY_STORE }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEY_STORE" ] || [ -z "$KEY_STORE_PASSWORD" ] || [ -z "$ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "Signing secrets are required to publish release builds."
+            exit 1
+          fi
+
       - name: Set up JDK 17
         if: steps.diff.outputs.has_changes == 'true'
         uses: actions/setup-java@v5
