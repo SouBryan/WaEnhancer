@@ -147,6 +147,14 @@
 4. Install the WaEnhancer APK.
 5. Enable the WaEnhancer module in the Xposed Installer app.
 
+## Automated Fork Sync
+1. Fork the repository to your own GitHub account.
+2. Enable [.github/workflows/auto-sync-release.yml](../.github/workflows/auto-sync-release.yml) in the fork.
+3. Add `KEY_STORE`, `KEY_STORE_PASSWORD`, `ALIAS`, and `KEY_PASSWORD` secrets if you want signed APKs.
+4. Allow GitHub Actions to push to your default branch, because the workflow merges `Dev4Mod/WaEnhancer`, refreshes supported WhatsApp versions from APKMirror, and publishes both APK flavors automatically.
+
+Note: the automated workflow only syncs upstream commits and updates the supported-version allowlist. A newly listed WhatsApp version can still break hooks if the upstream unobfuscation logic has not caught up yet.
+
 ## Support
 If you encounter any issues or have questions about WaEnhancer, please [Visit Telegram](https://t.me/waenhancer).
 

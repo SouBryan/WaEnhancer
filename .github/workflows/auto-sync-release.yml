@@ -1,0 +1,183 @@
+name: Auto Sync And Release
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: auto-sync-release
+  cancel-in-progress: false
+
+jobs:
+  sync-build-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Capture current branch head
+        id: base
+        run: echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync with upstream master
+        id: upstream
+        run: |
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream https://github.com/Dev4Mod/WaEnhancer.git
+          git fetch upstream master
+          echo "upstream_sha=$(git rev-parse upstream/master)" >> "$GITHUB_OUTPUT"
+          git merge --no-edit upstream/master
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save --package-lock=false playwright
+          npx playwright install --with-deps chromium
+
+      - name: Refresh supported WhatsApp versions
+        id: versions
+        run: node scripts/automation/sync_whatsapp_support.mjs
+
+      - name: Clean temporary Node dependencies
+        run: rm -rf node_modules
+
+      - name: Detect repository changes
+        id: diff
+        run: |
+          head_changed=false
+          working_tree_dirty=false
+          if [ "$(git rev-parse HEAD)" != "${{ steps.base.outputs.base_sha }}" ]; then
+            head_changed=true
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            working_tree_dirty=true
+          fi
+          if [ "$head_changed" = true ] || [ "$working_tree_dirty" = true ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "head_changed=$head_changed" >> "$GITHUB_OUTPUT"
+          echo "working_tree_dirty=$working_tree_dirty" >> "$GITHUB_OUTPUT"
+
+      - name: Stop when nothing changed
+        if: steps.diff.outputs.has_changes == 'false'
+        run: echo "No upstream or support-list changes detected."
+
+      - name: Commit and push automation changes
+        if: steps.diff.outputs.working_tree_dirty == 'true'
+        run: |
+          git add -A
+          git commit -m "chore(auto): sync upstream and refresh WhatsApp support"
+
+      - name: Set up JDK 17
+        if: steps.diff.outputs.has_changes == 'true'
+        uses: actions/setup-java@v5
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache: gradle
+          cache-dependency-path: |
+            **/*.gradle*
+            **/gradle-wrapper.properties
+            gradle/libs.versions.toml
+            **/gradle.properties
+
+      - name: Write signing key
+        if: steps.diff.outputs.has_changes == 'true' && secrets.KEY_STORE != ''
+        env:
+          KEY_STORE: ${{ secrets.KEY_STORE }}
+        run: |
+          echo androidStorePassword='${{ secrets.KEY_STORE_PASSWORD }}' >> gradle.properties
+          echo androidKeyAlias='${{ secrets.ALIAS }}' >> gradle.properties
+          echo androidKeyPassword='${{ secrets.KEY_PASSWORD }}' >> gradle.properties
+          echo androidStoreFile='key.jks' >> gradle.properties
+          echo "$KEY_STORE" | base64 --decode > key.jks
+
+      - name: Grant execute permission for gradlew
+        if: steps.diff.outputs.has_changes == 'true'
+        run: chmod +x gradlew
+
+      - name: Build both APK flavors
+        if: steps.diff.outputs.has_changes == 'true'
+        run: ./gradlew assembleWhatsappDebug assembleBusinessDebug -Pminify=true
+
+      - name: Push branch changes
+        if: steps.diff.outputs.has_changes == 'true'
+        run: |
+          git push origin HEAD:${GITHUB_REF_NAME}
+
+      - name: Collect release metadata
+        if: steps.diff.outputs.has_changes == 'true'
+        id: release_meta
+        run: |
+          messenger_added="${{ steps.versions.outputs.messenger_added }}"
+          business_added="${{ steps.versions.outputs.business_added }}"
+          if [ -z "$messenger_added" ]; then
+            messenger_added="none"
+          fi
+          if [ -z "$business_added" ]; then
+            business_added="none"
+          fi
+          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "release_tag=auto-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          cat <<EOF > "$RUNNER_TEMP/auto-release-notes.md"
+          Automated sync against Dev4Mod/WaEnhancer.
+
+          Upstream commit: https://github.com/Dev4Mod/WaEnhancer/commit/${{ steps.upstream.outputs.upstream_sha }}
+
+          WhatsApp Messenger stable: ${{ steps.versions.outputs.messenger_stable }}
+          WhatsApp Messenger beta: ${{ steps.versions.outputs.messenger_beta }}
+          WhatsApp Business stable: ${{ steps.versions.outputs.business_stable }}
+          WhatsApp Business beta: ${{ steps.versions.outputs.business_beta }}
+
+          Added support patterns (Messenger): $messenger_added
+          Added support patterns (Business): $business_added
+
+          Current support list (Messenger): ${{ steps.versions.outputs.messenger_patterns }}
+          Current support list (Business): ${{ steps.versions.outputs.business_patterns }}
+
+          Warning: this workflow only syncs upstream changes and refreshes the supported-version allowlist. Runtime compatibility can still break when WhatsApp obfuscation changes ahead of the upstream hooks.
+          EOF
+          echo "release_notes=$RUNNER_TEMP/auto-release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Upload WhatsApp artifact
+        if: steps.diff.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: whatsapp-debug-app-${{ steps.release_meta.outputs.short_sha }}
+          path: app/build/outputs/apk/whatsapp/debug/app-whatsapp-debug.apk
+
+      - name: Upload Business artifact
+        if: steps.diff.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: business-debug-app-${{ steps.release_meta.outputs.short_sha }}
+          path: app/build/outputs/apk/business/debug/app-business-debug.apk
+
+      - name: Publish GitHub release
+        if: steps.diff.outputs.has_changes == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ steps.release_meta.outputs.release_tag }}
+          name: WaEnhancer Auto ${{ steps.release_meta.outputs.short_sha }}
+          body_path: ${{ steps.release_meta.outputs.release_notes }}
+          files: |
+            app/build/outputs/apk/whatsapp/debug/app-whatsapp-debug.apk
+            app/build/outputs/apk/business/debug/app-business-debug.apk
