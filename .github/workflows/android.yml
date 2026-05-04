@@ -53,35 +53,39 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build all flavor variants
+      - name: Build release variants
         run: |
-          ./gradlew assembleWhatsappDebug assembleBusinessDebug -Pminify=true
+          ./gradlew assembleWhatsappRelease assembleBusinessRelease -Pminify=true
 
       - name: Get short SHA
         run: echo "SHORT_SHA=`echo ${GITHUB_SHA} | cut -c1-7`" >> $GITHUB_ENV
 
+      - name: Build release notes
+        run: |
+          node scripts/automation/build_release_notes.mjs --output "$RUNNER_TEMP/release-notes.md"
+
       - name: Upload WhatsApp flavor artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: whatsapp-debug-app-${{ env.SHORT_SHA }}
-          path: app/build/outputs/apk/whatsapp/debug/app-whatsapp-debug.apk
+          name: whatsapp-release-app-${{ env.SHORT_SHA }}
+          path: app/build/outputs/apk/whatsapp/release/app-whatsapp-release.apk
 
       - name: Upload Business flavor artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: business-debug-app-${{ env.SHORT_SHA }}
-          path: app/build/outputs/apk/business/debug/app-business-debug.apk
+          name: business-release-app-${{ env.SHORT_SHA }}
+          path: app/build/outputs/apk/business/release/app-business-release.apk
 
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           name: WaEnhancer ${{ env.SHORT_SHA }}
-          body_path: changelog.txt
+          body_path: ${{ runner.temp }}/release-notes.md
           files: |
-            app/build/outputs/apk/whatsapp/debug/app-whatsapp-debug.apk
-            app/build/outputs/apk/business/debug/app-business-debug.apk
-          tag_name: debug-${{ env.SHORT_SHA }}
+            app/build/outputs/apk/whatsapp/release/app-whatsapp-release.apk
+            app/build/outputs/apk/business/release/app-business-release.apk
+          tag_name: release-${{ env.SHORT_SHA }}
 
       - name: Read changelog
         if: ${{ success() && github.ref == 'refs/heads/master' && github.ref_type != 'tag' && env.BOT_TOKEN != '' }}
@@ -104,4 +108,4 @@ jobs:
           message: |
             ${{ steps.changelog.outputs.content }}
 
-            Release: https://github.com/${{ github.repository }}/releases/tag/debug-${{ env.SHORT_SHA }}
+            Release: https://github.com/${{ github.repository }}/releases/tag/release-${{ env.SHORT_SHA }}

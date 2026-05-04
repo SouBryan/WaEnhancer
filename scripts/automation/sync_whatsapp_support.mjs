@@ -176,6 +176,8 @@ async function main() {
     setGithubOutput("business_beta", discoveredVersions.business.betaRaw);
     setGithubOutput("messenger_patterns", nextMessengerValues.join(", "));
     setGithubOutput("business_patterns", nextBusinessValues.join(", "));
+    setGithubOutput("messenger_latest_pattern", nextMessengerValues.at(-1) ?? "");
+    setGithubOutput("business_latest_pattern", nextBusinessValues.at(-1) ?? "");
     setGithubOutput("messenger_added", messengerAdded.join(", "));
     setGithubOutput("business_added", businessAdded.join(", "));
 
